@@ -31,6 +31,7 @@ class PatchCore(torch.nn.Module):
         self.backbone_name = backbone_name
         # average function for pooling of j and j+1 backbone layer
         self.feature_avg_pooler = torch.nn.AvgPool2d(kernel_size=patch_size, stride=stride)
+        self.patch_lib = []
 
     def get_features(self, x: tensor):
         x = x.to(self.device)
@@ -51,7 +52,7 @@ class PatchCore(torch.nn.Module):
             layer_j_size = feature_maps[0].shape[-2:]
             resized_features = self.resized_embeds(features, layer_j_size)
             resized_features = self.reshape(resized_features)
-            # append resides features to smth
+            self.patch_lib.append(resized_features)
 
     def evaluate (self, test_dataloader: DataLoader):
         for sample, _, _ in tqdm(test_dataloader):
