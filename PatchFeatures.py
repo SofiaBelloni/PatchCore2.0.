@@ -54,6 +54,8 @@ class PatchCore(torch.nn.Module):
             resized_features = self.reshape(resized_features)
             self.patch_lib.append(resized_features)
 
+            # TODO apply patch_lib reduction here
+
     def evaluate (self, test_dataloader: DataLoader):
         for sample, _, _ in tqdm(test_dataloader):
             # extract features from pretrained net
@@ -66,7 +68,8 @@ class PatchCore(torch.nn.Module):
             layer_j_size = feature_maps[0].shape[-2:]
             resized_features = self.resized_embeds(features, layer_j_size)
             resized_features = self.reshape(resized_features)
-            # build knn distance etc.
+
+            # TODO build knn distance etc.
 
     @staticmethod
     def resized_embeds(features: List[Tensor], size) -> Tensor:
