@@ -2,7 +2,7 @@ import torch
 from PatchFeatures import PatchCore
 from MVTec import MVTecData
 POSSIBLE_CLASSES = [
-    "bottle",
+    "bottle_copy",
     "cable",
     "capsule",
     "carpet",
@@ -21,7 +21,7 @@ POSSIBLE_CLASSES = [
 
 
 def run():
-    products = ["bottle", "cable"]
+    products = ["bottle_copy", "cable"]
     for prd in products:
         # create new model for each product
         model = PatchCore(
