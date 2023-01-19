@@ -135,26 +135,16 @@ class MVTecTest(ImageFolder):
         self.size = img_size
 
     def __getitem__(self, item_nr):
+        # TODO implement operations with mask / ground truth
         path, _ = self.samples[item_nr]
         sample = self.loader(path)
-
         # distinguish between good or anomalous product
         if "good" in path:
-            # target = Img.new('L', (self.size, self.size))
             sample_class = 0
         else:
-            # target_path = path.replace("test", "ground_truth")
-            # target_path = target_path.replace(".png", "_mask.png")
-            # target = self.loader(target_path)
             sample_class = 1
-
         if self.transform is not None:
             sample = self.transform(sample)
-        # if self.target_transform is not None:
-        #    target = self.target_transform(target)
-
         return sample, sample_class
-        # return sample, target[:1], sample_class
 
-
-mvt = MVTecData(product="bottle", img_size=224)
+#mvt = MVTecData(product="bottle", img_size=224)

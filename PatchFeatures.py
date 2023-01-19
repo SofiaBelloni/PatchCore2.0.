@@ -92,3 +92,4 @@ class PatchCore(torch.nn.Module):
         embedding_size = embedding.size(1)
         embedding = embedding.permute(0, 2, 3, 1).reshape(-1, embedding_size)
         return embedding
+
