@@ -1,6 +1,8 @@
 import requests, zipfile, io
 import os
-import PIL
+import wget
+import tarfile
+from PIL import Image as Img
 import torch
 from torch import tensor
 from torchvision import transforms
@@ -28,6 +30,7 @@ MVTEC_CLASSES = [
     "zipper",
 ]
 
+
 class MVTecData(ImageFolder):
     def __init__(self, product: str, img_size: int = 224):
         self.product = product
@@ -43,7 +46,6 @@ class MVTecData(ImageFolder):
     def downloadClass(self, product: str):
         if not os.path.isdir(os.path.join(DATA_PATH, product)):
             print(f"Class {product} not found. Start download.")
-            target_path = os.path.join(DATA_PATH, product)
             if product == "bottle":
                 link = "https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420937370" \
                        "-1629951468/bottle_copy.tar.xz "
@@ -92,10 +94,12 @@ class MVTecData(ImageFolder):
             else:
                 print("No download link provided.")
                 return
-            r = requests.get(link)
-            z = zipfile.ZipFile(io.BytesIO(r.content))
-            os.mkdir(target_path)
-            z.extractall(target_path)
+            wget.download(link)
+            with tarfile.open(f"{product}.tar.xz") as tar:
+                tar.extractall(DATA_PATH)
+            os.remove(f"{product}.tar.xz")
+        else:
+            print(f"Class {product} already downloaded.")
 
     def return_datasets(self):
         return self.train_dataset, self.test_dataset
@@ -103,8 +107,8 @@ class MVTecData(ImageFolder):
 
 class MVTecTrain(ImageFolder):
     def __init__(self, product: str, img_size: int = 224):
-        super.__init__(
-            root=os.path.join(DATA_PATH, product, "train", "good"),
+        super().__init__(
+            root=os.path.join(DATA_PATH, product, "train"),
             transform=transforms.Compose([
                 transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
                 transforms.CenterCrop(img_size),
@@ -118,7 +122,7 @@ class MVTecTrain(ImageFolder):
 
 class MVTecTest(ImageFolder):
     def __init__(self, product: str, img_size: int = 224):
-        super.__init__(
+        super().__init__(
             root=os.path.join(DATA_PATH, product, "test"),
             transform=transforms.Compose([
                 transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
@@ -130,7 +134,27 @@ class MVTecTest(ImageFolder):
         self.product = product
         self.size = img_size
 
-    #def __getitem__(self, item):
-        #TODO implent get item with distinction between good vs rest in path
+    def __getitem__(self, item_nr):
+        path, _ = self.samples[item_nr]
+        sample = self.loader(path)
+
+        # distinguish between good or anomalous product
+        if "good" in path:
+            # target = Img.new('L', (self.size, self.size))
+            sample_class = 0
+        else:
+            # target_path = path.replace("test", "ground_truth")
+            # target_path = target_path.replace(".png", "_mask.png")
+            # target = self.loader(target_path)
+            sample_class = 1
+
+        if self.transform is not None:
+            sample = self.transform(sample)
+        # if self.target_transform is not None:
+        #    target = self.target_transform(target)
+
+        return sample, sample_class
+        # return sample, target[:1], sample_class
+
 
 mvt = MVTecData(product="bottle", img_size=224)
