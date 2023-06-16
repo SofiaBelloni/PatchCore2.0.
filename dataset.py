@@ -37,9 +37,9 @@ class MVTecData(ImageFolder):
       url = "https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420938113-1629952094/mvtec_anomaly_detection.tar.xz"
       if not os.path.isdir(f'{DATA_PATH}'):
         if not os.path.exists(f'{DATA_PATH}.tar.xz'):
-          print('Sto scaricando...')
+          print('Downloading dataset...')
           wget.download(url)
-        print('Sto estraendo...')
+        print('Extracting dataset...')
         with tarfile.open(DATA_PATH+".tar.xz") as tar:
           tar.extractall(DATA_PATH)
       self.train_dataset = MVTecTrain(product, img_size)
@@ -82,7 +82,7 @@ class MVTecTest(ImageFolder):
     )
     self.product = product
     self.img_size = img_size
-  # Custom get_item in order to create the correct label
+
   def __getitem__(self, index):
     path, _ = self.samples[index]
     sample = self.loader(path)
