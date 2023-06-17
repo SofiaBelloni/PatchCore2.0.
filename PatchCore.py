@@ -21,7 +21,7 @@ class PatchCore(torch.nn.Module):
     self.k = k                                                                          # HYPERPARAMETER
     self.sigma = sigma
     self.kernel_size = int(2 * self.sigma * 4 + 1) 
-    self.feature_extractor = timm.create_model(backbone, pretrained=True, features_only=True, out_indices=self.out_indices)
+    self.feature_extractor = timm.create_model(backbone, pretrained=True, features_only=True, out_indices=self.out_indices).to('cuda')
     if torch.cuda.is_available():
         self.device = 'cuda'
         self = self.to(self.device)
