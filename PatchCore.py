@@ -10,6 +10,7 @@ from sklearn.metrics import roc_curve, auc, roc_auc_score
 from torch import tensor, Tensor
 from typing import Tuple, List
 from torch.utils.data import DataLoader
+from torchvision import transforms
 
 class PatchCore(torch.nn.Module):
   def __init__(self, backbone: 'resnet50', out_indices: Tuple = (2,3),
