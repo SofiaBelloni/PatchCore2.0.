@@ -3,46 +3,58 @@ import timm
 import torch.nn.functional as F
 import time
 import numpy as np
+import clip
 
 from tqdm import tqdm
 from sklearn import random_projection
-from sklearn.metrics import roc_curve, auc, roc_auc_score
+from sklearn.metrics import roc_curve, auc
 from torch import tensor, Tensor
 from typing import Tuple, List
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize, InterpolationMode
+from dataset import _convert_image_to_rgb
 
-class PatchCore(torch.nn.Module):
-  def __init__(self, backbone: 'resnet50', out_indices: Tuple = (2,3),
-               input_size: int = 224, patch_size: int = 3, stride: int = 1,
-               k: int = 3, sigma: int = 4, perc_coreset: float = 0.25, eps: float =0.9):
+IMAGENET_MEAN = tensor([.485, .456, .406])
+IMAGENET_STD = tensor([.229, .224, .225])
+
+class PatchCoreBase(torch.nn.Module):
+  def __init__(self, backbone: 'resnet50',
+               out_indices: Tuple = (2,3),
+               input_size: int = 224,
+               patch_size: int = 3,
+               stride: int = 1,
+               k: int = 3,
+               sigma: int = 4,
+               perc_coreset: float = 0.25,
+               eps: float =0.9):
     super().__init__()
     self.out_indices = out_indices
     self.input_size = input_size
     self.k = k                                                                          # HYPERPARAMETER
     self.sigma = sigma
     self.kernel_size = int(2 * self.sigma * 4 + 1) 
-    self.feature_extractor = timm.create_model(backbone, pretrained=True, features_only=True, out_indices=self.out_indices)
+    self.feature_extractor = None
     if torch.cuda.is_available():
         self.device = 'cuda'
         self.to(self.device)
     else:
-        self.device = 'cpu'
-    for param in self.feature_extractor.parameters():
-      param.requires_grad = False
-    self.feature_extractor.eval()                                                       # Inference mode instead of training
+        self.device = 'cpu'                                                       # Inference mode instead of training
     self.pooling = torch.nn.AvgPool2d(patch_size, stride)                               # Pooling done after the feature extraction
     self.memory_bank = []
     self.perc_coreset = perc_coreset                                                    # HYPERPARAMETER
-    self.eps = eps                                                                      # HYPERPARAMETER
+    self.eps = eps
+    self.transformation = None
+    self.target_transformation = None                                                              # HYPERPARAMETER
 
   def forward(self, input: tensor):
-    input = input.to(self.device)
-    with torch.no_grad():
-      feature_maps = self.feature_extractor(input)
-    return feature_maps
+    raise NotImplementedError
+  
+  def get_transform(self):
+    return self.transformation, self.target_transformation
 
   def fit(self, input: DataLoader):
+    print('Training model...')
     patches = []
     for sample, _ in tqdm(input):
       feature_maps = self(sample)
@@ -59,6 +71,7 @@ class PatchCore(torch.nn.Module):
         patches = patches.to(self.device)
     except ValueError:
       print(f'Error in SparseRandomProjection')
+    print('Coreset reduction...')
     self.memory_bank = patches[self.coreset_reduction(reduced_patches)]
 
   def predict(self, sample):
@@ -70,10 +83,10 @@ class PatchCore(torch.nn.Module):
     max_index = torch.argmax(min_distances)
     m_test = resized_features[max_index].unsqueeze(0)                                                   # Test features
     m_star = self.memory_bank[nearest_neighbor_indexes[max_index]].unsqueeze(0)                         # Memory bank features
-    s_star = torch.cdist(m_test, m_star)
+    s_star = torch.cdist(m_test.float(), m_star.float())
     _, nb_indexes = self.nearest_neighbour_search(m_star, self.k)
     nb_features = self.memory_bank[nb_indexes]
-    nb_distances = torch.cdist(m_test, nb_features)
+    nb_distances = torch.cdist(m_test.float(), nb_features.float())
     w = 1 - (torch.exp(s_star)/torch.sum(torch.exp(nb_distances)))
     anomaly_score = w * s_star
     segmentation_map = min_distances.reshape(1, 1, *feature_map_size)
@@ -83,6 +96,7 @@ class PatchCore(torch.nn.Module):
     return anomaly_score, segmentation_map
 
   def evaluate(self, input: DataLoader):
+    print('Evaluation started...')
     anomaly_scores = []
     segmentation_maps_flattened = []
     labels = []
@@ -100,16 +114,15 @@ class PatchCore(torch.nn.Module):
       mask = torch.mean(mask, dim=1, keepdim=True)
       masks.extend(mask.flatten().numpy().astype(int))
 
-    fpr, tpr, thresholds = roc_curve(masks, segmentation_maps_flattened)    # Roc curve for segmentation map
-    roc_auc_sm = auc(fpr, tpr)
+    fpr_sm, tpr_sm, thresholds = roc_curve(masks, segmentation_maps_flattened)    # Roc curve for segmentation map
+    roc_auc_sm = auc(fpr_sm, tpr_sm)
 
     y_true = np.array(labels)
     y_scores = np.array(anomaly_scores)
-    fpr, tpr, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
-    roc_auc_ad = auc(fpr, tpr)
-    
-    return roc_auc_ad, roc_auc_sm, sum(inference_times)/len(inference_times)
+    fpr_as, tpr_as, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
+    roc_auc_as = auc(fpr_as, tpr_as)
 
+    return fpr_sm, tpr_sm, fpr_as, tpr_as, roc_auc_as, roc_auc_sm, sum(inference_times)/len(inference_times)
 
   def resize(self, input_features: List[Tensor], new_size) -> Tensor:
     resized_features = []
@@ -151,3 +164,73 @@ class PatchCore(torch.nn.Module):
     resized_features = self.resize(features, feature_map_size)                        # Custom methods to resize and reshape the patches
     resized_features = self.reshape(resized_features)
     return resized_features, feature_map_size
+
+class PatchCore(PatchCoreBase):
+  def __init__(self, backbone: 'resnet50', 
+               out_indices: Tuple = (2,3),
+               input_size: int = 224,
+               patch_size: int = 3,
+               stride: int = 1,
+               k: int = 3,
+               sigma: int = 4,
+               perc_coreset: float = 0.25,
+               eps: float =0.9):
+    super().__init__(backbone, out_indices, input_size,
+                     patch_size, stride, k, sigma, perc_coreset, eps)
+    
+    self.feature_extractor = timm.create_model(backbone, pretrained=True, features_only=True, out_indices=self.out_indices)
+    for param in self.feature_extractor.parameters():
+      param.requires_grad = False
+    self.feature_extractor.eval()                       # Inference mode instead of training                                                                      # HYPERPARAMETER
+
+    self.transformation = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(input_size),
+            transforms.ToTensor(),
+            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
+        ])
+    self.target_transformation = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(input_size),
+            transforms.ToTensor(),
+        ])
+    
+  def forward(self, input: tensor):
+    input = input.to(self.device)
+    with torch.no_grad():
+      feature_maps = self.feature_extractor(input)
+    return feature_maps
+
+class PatchCoreWithCLIP(PatchCoreBase):
+  def __init__(self, backbone: 'resnet50', 
+               out_indices: Tuple = (2,3),
+               input_size: int = 224, 
+               patch_size: int = 3, 
+               stride: int = 1,
+               k: int = 3, 
+               sigma: int = 4, 
+               perc_coreset: float = 0.25, 
+               eps: float =0.9):
+    super().__init__(backbone, out_indices, input_size, 
+                     patch_size, stride, k, sigma, perc_coreset, eps)
+    self.feature_extractor, self.transformation = clip.load(backbone, device = self.device)
+    for param in self.feature_extractor.parameters():
+      param.requires_grad = False
+    self.feature_extractor.eval()         # Inference mode instead of training
+    
+    self.target_transformation = transforms.Compose([
+          Resize(size=input_size, interpolation=InterpolationMode.BICUBIC),
+          CenterCrop(size=(input_size, input_size)),
+          _convert_image_to_rgb ,
+          ToTensor()  ])
+                                                          
+  def forward(self, input: tensor):
+    input = input.to(self.device)
+    feature_maps = []
+    def custom_hook(module, input, output):
+      feature_maps.append(output)
+    with torch.no_grad():
+      self.feature_extractor.visual.layer2[-1].register_forward_hook(custom_hook)
+      self.feature_extractor.visual.layer3[-1].register_forward_hook(custom_hook)
+      self.feature_extractor.encode_image(input)
+    return feature_maps

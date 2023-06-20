@@ -6,9 +6,7 @@ from torchvision.datasets import ImageFolder
 from torch import tensor
 from torchvision import transforms
 from PIL import Image
-
-IMAGENET_MEAN = tensor([.485, .456, .406])
-IMAGENET_STD = tensor([.229, .224, .225])
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 
 DATA_PATH = "/content/mvtec_anomaly_detection"
 
@@ -29,10 +27,13 @@ POSSIBLE_CLASSES = [
     "wood",
     "zipper",
 ]
+def _convert_image_to_rgb(image):
+    return image.convert("RGB")
+
 class MVTecData(ImageFolder):
-  def __init__(self, product, img_size: 224):
+
+  def __init__(self, product, transform, target_transform):
     self.product = product
-    self.img_size = img_size
     if product in POSSIBLE_CLASSES:
       url = "https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420938113-1629952094/mvtec_anomaly_detection.tar.xz"
       if not os.path.isdir(f'{DATA_PATH}'):
@@ -42,8 +43,8 @@ class MVTecData(ImageFolder):
         print('Extracting dataset...')
         with tarfile.open(DATA_PATH+".tar.xz") as tar:
           tar.extractall(DATA_PATH)
-      self.train_dataset = MVTecTrain(product, img_size)
-      self.test_dataset = MVTecTest(product, img_size)
+      self.train_dataset = MVTecTrain(product, transform )
+      self.test_dataset = MVTecTest(product, transform, target_transform)
     else:
       print(f'{product} not present in MVTEC Dataset')
 
@@ -51,37 +52,21 @@ class MVTecData(ImageFolder):
     return self.train_dataset, self.test_dataset
 
 class MVTecTrain(ImageFolder):
-  def __init__(self, product, img_size):
+  def __init__(self, product, transform):
     super().__init__(
         root = f'{DATA_PATH}/{product}/train/',
-        transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(img_size),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
-        ])
+        transform = transform
     )
     self.product = product
-    self.img_size = img_size
 
 class MVTecTest(ImageFolder):
-  def __init__(self, product, img_size):
+  def __init__(self, product, transform, target_transform):
     super().__init__(
         root = f'{DATA_PATH}/{product}/test/',
-        transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(img_size),
-            transforms.ToTensor(),
-            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)
-        ]),
-        target_transform = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(img_size),
-            transforms.ToTensor(),
-        ])
+        transform = transform,
+        target_transform = target_transform,
     )
     self.product = product
-    self.img_size = img_size
 
   def __getitem__(self, index):
     path, _ = self.samples[index]
