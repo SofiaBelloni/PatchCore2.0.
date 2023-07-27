@@ -31,7 +31,13 @@ def _convert_image_to_rgb(image):
     return image.convert("RGB")
 
 class MVTecData(ImageFolder):
-
+  '''
+    This class represents the MVTec Dataset.
+    Parameters:
+    - product: string that represents one of the possible MVTec Dataset classes,
+    - transform: transformations to be applied to the images, 
+    - target transform: transformations to be applied to the target (mask).
+  '''
   def __init__(self, product, transform, target_transform):
     self.product = product
     if product in POSSIBLE_CLASSES:
@@ -47,11 +53,19 @@ class MVTecData(ImageFolder):
       self.test_dataset = MVTecTest(product, transform, target_transform)
     else:
       print(f'{product} not present in MVTEC Dataset')
-
+  '''
+    Returns train and test datasets.
+  '''
   def get_datasets(self):
     return self.train_dataset, self.test_dataset
 
 class MVTecTrain(ImageFolder):
+  '''
+    This class represents the MVTec TRAIN Dataset.
+    Parameters:
+    - product: string that represents one of the possible MVTec Dataset classes,
+    - transform: transformations to be applied to the images, 
+  '''
   def __init__(self, product, transform):
     super().__init__(
         root = f'{DATA_PATH}/{product}/train/',
@@ -60,6 +74,13 @@ class MVTecTrain(ImageFolder):
     self.product = product
 
 class MVTecTest(ImageFolder):
+  '''
+    This class represents the MVTec TEST Dataset.
+     Parameters:
+    - product: string that represents one of the possible MVTec Dataset classes,
+    - transform: transformations to be applied to the images, 
+    - target transform: transformations to be applied to the target (mask).
+  '''
   def __init__(self, product, transform, target_transform):
     super().__init__(
         root = f'{DATA_PATH}/{product}/test/',

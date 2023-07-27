@@ -308,7 +308,7 @@ class PatchCoreWithCLIP(PatchCoreBase):
           _convert_image_to_rgb ,
           ToTensor()  ])
 
-   '''
+  '''
      Feature extraction of the input sample using feature extractor network
      The custom hooks extract the layer 2 and 3 feature maps.
      Return the extracted feature maps.
