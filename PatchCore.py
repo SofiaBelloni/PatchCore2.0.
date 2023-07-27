@@ -18,9 +18,22 @@ from dataset import _convert_image_to_rgb
 IMAGENET_MEAN = tensor([.485, .456, .406])
 IMAGENET_STD = tensor([.229, .224, .225])
 
+
 class PatchCoreBase(torch.nn.Module):
-  def __init__(self, backbone: 'resnet50',
-               out_indices: Tuple = (2,3),
+  ''' 
+    PatchCore super-class.
+    Parameters:
+    - out_indices: Tuple that represent the output indices for the feature extractor,
+    - input_size: Integer that represents the dimensions of the input image,
+    - patch_size: Integer that represents the size of the window
+      in the average pooling,
+    - stride: Integer that represents the stride of the window in the average pooling,
+    - k: Number of nearest patch-features analyzed,
+    - sigma: Kernel width of the Gaussian,
+    - perc_coreset: Percentage to which the original memory bank has been subsampled to,
+    - eps: Parameter to control the quality of the embedding according to the Johnson-Lindenstrauss lemma.
+  '''
+  def __init__(self, out_indices: Tuple = (2,3),
                input_size: int = 224,
                patch_size: int = 3,
                stride: int = 1,
@@ -47,12 +60,24 @@ class PatchCoreBase(torch.nn.Module):
     self.transformation = None
     self.target_transformation = None                                                              # HYPERPARAMETER
 
+  '''
+    Defines the computation performed at every call.
+  '''
   def forward(self, input: tensor):
     raise NotImplementedError
   
+  '''
+    Returns the transformations to be applied to the train and target data.
+  '''
   def get_transform(self):
     return self.transformation, self.target_transformation
 
+  '''
+    Training method. In PatchCore the training phase is represented by:
+    - local patch features aggregated into a memory bank
+    - corset-reduction to increase efficiency. To further reduce coreset selection time, 
+      making use of the Johnson-Lindenstrauss theorem to reduce dimensionality of each element.
+  '''
   def fit(self, input: DataLoader):
     print('Training model...')
     patches = []
@@ -74,6 +99,16 @@ class PatchCoreBase(torch.nn.Module):
     print('Coreset reduction...')
     self.memory_bank = patches[self.coreset_reduction(reduced_patches)]
 
+  '''
+    Return anomaly detection score and relative segmentation map for a single test sample.
+    Anomaly detection steps:
+    - Create a locally aware patch feature of the test sample.
+    - Compute the image-level anomaly detection score for the test sample by comparing
+      the test patch with the nearest neighbours patches inside the memory bank.
+    - Compute a segmentation map by realigning computed path anomaly scores based on
+      their respective spacial location and upscale the result by bi-linear interpolation 
+      and smooth the result with a gaussian blur.
+  '''
   def predict(self, sample):
     feature_maps = self(sample)
     resized_features, feature_map_size = self.patch_extraction(feature_maps)
@@ -95,6 +130,17 @@ class PatchCoreBase(torch.nn.Module):
 
     return anomaly_score, segmentation_map
 
+  '''
+    Evaluation of the model's performance through the roc auc metric.
+    This method returns:
+    - false positive rate for images segmentation
+    - true positive rate for images segmentation
+    - false positive rate for images predictions
+    - true positive rate for images predictions
+    - roc_auc score for images predictions
+    - roc_auc score for images segmentation
+    - mean inference time
+  '''
   def evaluate(self, input: DataLoader):
     print('Evaluation started...')
     anomaly_scores = []
@@ -124,6 +170,9 @@ class PatchCoreBase(torch.nn.Module):
 
     return fpr_sm, tpr_sm, fpr_as, tpr_as, roc_auc_as, roc_auc_sm, sum(inference_times)/len(inference_times)
 
+  '''
+    Custom methods to resize the patches, using adaptive average pooling.
+  '''
   def resize(self, input_features: List[Tensor], new_size) -> Tensor:
     resized_features = []
     for input_feature in input_features:
@@ -131,11 +180,19 @@ class PatchCoreBase(torch.nn.Module):
     resized_features = torch.cat(resized_features, dim=1)
     return resized_features
 
+  '''
+    Custom methods to reshape the patches
+  '''
   def reshape(self, input_features: Tensor) -> Tensor:
     num_features = input_features.size(1)
     input_features = input_features.permute(0,2,3,1).reshape(-1, num_features)
     return input_features
 
+  '''
+    Greedy coreset subsampling, using the minimax facility locations 
+    as a metric to select the coreset.
+    Returns coreset indexes for given memory_bank.
+  '''
   def coreset_reduction(self, patches: List[Tensor]) -> List[Tensor]:
     coreset_indexes = []
     index = 0
@@ -150,22 +207,38 @@ class PatchCoreBase(torch.nn.Module):
       min_distances[index] = 0
       coreset_indexes.append(index)
     return coreset_indexes
+  
+  '''
+    Nearest neighbour search method.
+    Parameters:
+    - sample_features: test patch-feature whose k neighbors you want to find,
+    - k: number of patch-features closest in distance to the given one.
 
+  '''
   def nearest_neighbour_search(self, sample_features, k=1):
     distances = torch.cdist(sample_features, self.memory_bank)
     scores, nearest_neighbor_indexes = distances.topk(k, largest=False)
     return scores, nearest_neighbor_indexes
   
+  '''
+    Patch extraction method.
+  '''
   def patch_extraction(self, feature_maps):
     features = []
     for feature_map in feature_maps:
         features.append(self.pooling(feature_map))
     feature_map_size = feature_maps[0].shape[-2:]
-    resized_features = self.resize(features, feature_map_size)                        # Custom methods to resize and reshape the patches
+    resized_features = self.resize(features, feature_map_size) # Custom methods to resize and reshape the patches
     resized_features = self.reshape(resized_features)
     return resized_features, feature_map_size
 
 class PatchCore(PatchCoreBase):
+  '''
+    PatchCore is a subclass of PatchCoreBase class. 
+    The __init__ method override the one from the PatchCoreBase class with one mone parameter:
+    - backbone: String that represents the model name that will be used as the backbone network
+      for feature extractor. 
+  '''
   def __init__(self, backbone: 'resnet50', 
                out_indices: Tuple = (2,3),
                input_size: int = 224,
@@ -175,7 +248,7 @@ class PatchCore(PatchCoreBase):
                sigma: int = 4,
                perc_coreset: float = 0.25,
                eps: float =0.9):
-    super().__init__(backbone, out_indices, input_size,
+    super().__init__(out_indices, input_size,
                      patch_size, stride, k, sigma, perc_coreset, eps)
     
     self.feature_extractor = timm.create_model(backbone, pretrained=True, features_only=True, out_indices=self.out_indices)
@@ -194,7 +267,10 @@ class PatchCore(PatchCoreBase):
             transforms.CenterCrop(input_size),
             transforms.ToTensor(),
         ])
-    
+  '''
+    Feature extraction of the input sample using feature extractor network.
+    Return the extracted feature maps.
+  '''
   def forward(self, input: tensor):
     input = input.to(self.device)
     with torch.no_grad():
@@ -202,6 +278,14 @@ class PatchCore(PatchCoreBase):
     return feature_maps
 
 class PatchCoreWithCLIP(PatchCoreBase):
+  '''
+    PatchCoreWithCLIP is a subclass of PatchCoreBase class. 
+    It represents an extension of the PatchCore method that exploits the pretrained Image Encoder
+    of CLIP instead of the ImageNet pretrained one.
+    The __init__ method override the one from the PatchCoreBase class with one mone parameter:
+    - backbone: String that represents the CLIP model name that will be used as the backbone network
+      for feature extractor. 
+  '''
   def __init__(self, backbone: 'resnet50', 
                out_indices: Tuple = (2,3),
                input_size: int = 224, 
@@ -211,19 +295,24 @@ class PatchCoreWithCLIP(PatchCoreBase):
                sigma: int = 4, 
                perc_coreset: float = 0.25, 
                eps: float =0.9):
-    super().__init__(backbone, out_indices, input_size, 
+    super().__init__(out_indices, input_size, 
                      patch_size, stride, k, sigma, perc_coreset, eps)
     self.feature_extractor, self.transformation = clip.load(backbone, device = self.device)
     for param in self.feature_extractor.parameters():
       param.requires_grad = False
-    self.feature_extractor.eval()         # Inference mode instead of training
+    self.feature_extractor.eval()      # Inference mode instead of training
     
     self.target_transformation = transforms.Compose([
           Resize(size=input_size, interpolation=InterpolationMode.BICUBIC),
           CenterCrop(size=(input_size, input_size)),
           _convert_image_to_rgb ,
           ToTensor()  ])
-                                                          
+
+   '''
+     Feature extraction of the input sample using feature extractor network
+     The custom hooks extract the layer 2 and 3 feature maps.
+     Return the extracted feature maps.
+  '''                                            
   def forward(self, input: tensor):
     input = input.to(self.device)
     feature_maps = []
