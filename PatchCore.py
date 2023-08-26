@@ -100,15 +100,15 @@ class PatchCore(torch.nn.Module):
       mask = torch.mean(mask, dim=1, keepdim=True)
       masks.extend(mask.flatten().numpy().astype(int))
 
-    fpr, tpr, thresholds = roc_curve(masks, segmentation_maps_flattened)    # Roc curve for segmentation map
-    roc_auc_sm = auc(fpr, tpr)
+    fpr_sm, tpr_sm, thresholds = roc_curve(masks, segmentation_maps_flattened)    # Roc curve for segmentation map
+    roc_auc_sm = auc(fpr_sm, tpr_sm)
 
     y_true = np.array(labels)
     y_scores = np.array(anomaly_scores)
-    fpr, tpr, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
-    roc_auc_ad = auc(fpr, tpr)
+    fpr_as, tpr_as, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
+    roc_auc_as = auc(fpr_as, tpr_as)
     
-    return roc_auc_ad, roc_auc_sm, sum(inference_times)/len(inference_times)
+    return fpr_sm, tpr_sm, fpr_as, tpr_as, roc_auc_as, roc_auc_sm, sum(inference_times)/len(inference_times)
 
 
   def resize(self, input_features: List[Tensor], new_size) -> Tensor:
