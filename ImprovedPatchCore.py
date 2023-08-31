@@ -1,5 +1,4 @@
 import torch
-import timm
 import torch.nn.functional as F
 import time
 import numpy as np
@@ -64,7 +63,6 @@ class PatchCoreWithClip(torch.nn.Module):
     The custom hooks extract the layer 2 and 3 feature maps.
     Return the extracted feature maps.
   '''                
-
   def forward(self, input: tensor):
     input = input.to(self.device)
     feature_maps = []
@@ -100,6 +98,7 @@ class PatchCoreWithClip(torch.nn.Module):
     except ValueError:
       print(f'Error in SparseRandomProjection')
     self.memory_bank = patches[self.coreset_reduction(reduced_patches)]
+
   '''
     Return anomaly detection score and relative segmentation map for a single test sample.
     Anomaly detection steps:
@@ -119,10 +118,10 @@ class PatchCoreWithClip(torch.nn.Module):
     max_index = torch.argmax(min_distances)
     m_test = resized_features[max_index].unsqueeze(0)                                                   # Test features
     m_star = self.memory_bank[nearest_neighbor_indexes[max_index]].unsqueeze(0)                         # Memory bank features
-    s_star = torch.cdist(m_test, m_star)
+    s_star = torch.cdist(m_test.float(), m_star.float())
     _, nb_indexes = self.nearest_neighbour_search(m_star, self.k)
     nb_features = self.memory_bank[nb_indexes]
-    nb_distances = torch.cdist(m_test, nb_features)
+    nb_distances = torch.cdist(m_test.float(), nb_features.float())
     w = 1 - (torch.exp(s_star)/torch.sum(torch.exp(nb_distances)))
     anomaly_score = w * s_star
     segmentation_map = min_distances.reshape(1, 1, *feature_map_size)
@@ -130,6 +129,7 @@ class PatchCoreWithClip(torch.nn.Module):
     segmentation_map = transforms.functional.gaussian_blur(segmentation_map, self.kernel_size, sigma = self.sigma)
 
     return anomaly_score, segmentation_map
+  
   '''
     Evaluation of the model's performance through the roc auc metric.
     This method returns:
