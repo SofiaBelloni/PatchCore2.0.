@@ -1,8 +1,43 @@
+import torch
+import timm
+import torch.nn.functional as F
+import time
+import numpy as np
+
+from tqdm import tqdm
+from sklearn import random_projection
+from sklearn.metrics import roc_curve, auc
+from torch import tensor, Tensor
+from typing import Tuple, List
+from torch.utils.data import DataLoader
+from torchvision import transforms
 import clip
-class PatchCore(torch.nn.Module):
-  def __init__(self, backbone: 'resnet50', out_indices: Tuple = (2,3),
-               input_size: int = 224, patch_size: int = 3, stride: int = 1,
-               k: int = 3, sigma: int = 4, perc_coreset: float = 0.25, eps: float =0.9):
+
+class PatchCoreWithClip(torch.nn.Module):
+  ''' 
+    PatchCoreWithCLip class.
+    Parameters:
+    - backbone: String that represents the CLIP model name that will be used as the backbone network
+      for feature extractor. 
+    - out_indices: Tuple that represent the output indices for the feature extractor,
+    - input_size: Integer that represents the dimensions of the input image,
+    - patch_size: Integer that represents the size of the window
+      in the average pooling,
+    - stride: Integer that represents the stride of the window in the average pooling,
+    - k: Number of nearest patch-features analyzed,
+    - sigma: Kernel width of the Gaussian,
+    - perc_coreset: Percentage to which the original memory bank has been subsampled to,
+    - eps: Parameter to control the quality of the embedding according to the Johnson-Lindenstrauss lemma.
+  '''
+  def __init__(self, backbone: 'RN50', 
+               out_indices: Tuple = (2,3),
+               input_size: int = 224,
+               patch_size: int = 3,
+               stride: int = 1,
+               k: int = 3,
+               sigma: int = 4,
+               perc_coreset: float = 0.25,
+               eps: float =0.9):
     super().__init__()
     self.out_indices = out_indices
     self.input_size = input_size
@@ -14,22 +49,39 @@ class PatchCore(torch.nn.Module):
         self.to(self.device)
     else:
         self.device = 'cpu'
-    self.feature_extractor = clip.load(backbone, device=self.device)
-        #TODO:
-    #for param in self.feature_extractor.parameters():
-    #  param.requires_grad = False
-    #self.feature_extractor.eval()                                                       # Inference mode instead of training
+    self.feature_extractor, _= clip.load(backbone, device=self.device)
+    for param in self.feature_extractor.parameters():
+      param.requires_grad = False
+    self.feature_extractor.eval()                                                       # Inference mode instead of training
     self.pooling = torch.nn.AvgPool2d(patch_size, stride)                               # Pooling done after the feature extraction
     self.memory_bank = []
     self.perc_coreset = perc_coreset                                                    # HYPERPARAMETER
     self.eps = eps                                                                      # HYPERPARAMETER
 
+  '''
+    Defines the computation performed at every call.
+    Feature extraction of the input sample using feature extractor network
+    The custom hooks extract the layer 2 and 3 feature maps.
+    Return the extracted feature maps.
+  '''                
+
   def forward(self, input: tensor):
     input = input.to(self.device)
+    feature_maps = []
+    def custom_hook(module, input, output):
+      feature_maps.append(output)
     with torch.no_grad():
-      #TODO:feature_maps = self.feature_extractor(input)
+      self.feature_extractor.visual.layer2[-1].register_forward_hook(custom_hook)
+      self.feature_extractor.visual.layer3[-1].register_forward_hook(custom_hook)
+      self.feature_extractor.encode_image(input)
     return feature_maps
-
+  
+  '''
+    Training method. In PatchCore the training phase is represented by:
+    - local patch features aggregated into a memory bank
+    - corset-reduction to increase efficiency. To further reduce coreset selection time, 
+      making use of the Johnson-Lindenstrauss theorem to reduce dimensionality of each element.
+  '''
   def fit(self, input: DataLoader):
     patches = []
     for sample, _ in tqdm(input):
@@ -48,7 +100,16 @@ class PatchCore(torch.nn.Module):
     except ValueError:
       print(f'Error in SparseRandomProjection')
     self.memory_bank = patches[self.coreset_reduction(reduced_patches)]
-
+  '''
+    Return anomaly detection score and relative segmentation map for a single test sample.
+    Anomaly detection steps:
+    - Create a locally aware patch feature of the test sample.
+    - Compute the image-level anomaly detection score for the test sample by comparing
+      the test patch with the nearest neighbours patches inside the memory bank.
+    - Compute a segmentation map by realigning computed path anomaly scores based on
+      their respective spacial location and upscale the result by bi-linear interpolation 
+      and smooth the result with a gaussian blur.
+  '''
   def predict(self, sample):
     feature_maps = self(sample)
     resized_features, feature_map_size = self.patch_extraction(feature_maps)
@@ -69,7 +130,17 @@ class PatchCore(torch.nn.Module):
     segmentation_map = transforms.functional.gaussian_blur(segmentation_map, self.kernel_size, sigma = self.sigma)
 
     return anomaly_score, segmentation_map
-
+  '''
+    Evaluation of the model's performance through the roc auc metric.
+    This method returns:
+    - false positive rate for images segmentation
+    - true positive rate for images segmentation
+    - false positive rate for images predictions
+    - true positive rate for images predictions
+    - roc_auc score for images predictions
+    - roc_auc score for images segmentation
+    - mean inference time
+  '''
   def evaluate(self, input: DataLoader):
     anomaly_scores = []
     segmentation_maps_flattened = []
@@ -88,17 +159,20 @@ class PatchCore(torch.nn.Module):
       mask = torch.mean(mask, dim=1, keepdim=True)
       masks.extend(mask.flatten().numpy().astype(int))
 
-    fpr, tpr, thresholds = roc_curve(masks, segmentation_maps_flattened)    # Roc curve for segmentation map
-    roc_auc_sm = auc(fpr, tpr)
+    fpr_sm, tpr_sm, thresholds = roc_curve(masks, segmentation_maps_flattened)    # Roc curve for segmentation map
+    roc_auc_sm = auc(fpr_sm, tpr_sm)
 
     y_true = np.array(labels)
     y_scores = np.array(anomaly_scores)
-    fpr, tpr, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
-    roc_auc_ad = auc(fpr, tpr)
+    fpr_as, tpr_as, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
+    roc_auc_as = auc(fpr_as, tpr_as)
     
-    return roc_auc_ad, roc_auc_sm, sum(inference_times)/len(inference_times)
+    return fpr_sm, tpr_sm, fpr_as, tpr_as, roc_auc_as, roc_auc_sm, sum(inference_times)/len(inference_times)
 
 
+  '''
+    Custom methods to resize the patches, using adaptive average pooling.
+  '''
   def resize(self, input_features: List[Tensor], new_size) -> Tensor:
     resized_features = []
     for input_feature in input_features:
@@ -106,11 +180,19 @@ class PatchCore(torch.nn.Module):
     resized_features = torch.cat(resized_features, dim=1)
     return resized_features
 
+  '''
+    Custom methods to reshape the patches
+  '''
   def reshape(self, input_features: Tensor) -> Tensor:
     num_features = input_features.size(1)
     input_features = input_features.permute(0,2,3,1).reshape(-1, num_features)
     return input_features
-
+  
+  '''
+    Greedy coreset subsampling, using the minimax facility locations 
+    as a metric to select the coreset.
+    Returns coreset indexes for given memory_bank.
+  '''
   def coreset_reduction(self, patches: List[Tensor]) -> List[Tensor]:
     coreset_indexes = []
     index = 0
@@ -125,12 +207,22 @@ class PatchCore(torch.nn.Module):
       min_distances[index] = 0
       coreset_indexes.append(index)
     return coreset_indexes
+  
+  '''
+    Nearest neighbour search method.
+    Parameters:
+    - sample_features: test patch-feature whose k neighbors you want to find,
+    - k: number of patch-features closest in distance to the given one.
 
+  '''
   def nearest_neighbour_search(self, sample_features, k=1):
     distances = torch.cdist(sample_features, self.memory_bank)
     scores, nearest_neighbor_indexes = distances.topk(k, largest=False)
     return scores, nearest_neighbor_indexes
   
+  '''
+    Patch extraction method.
+  '''
   def patch_extraction(self, feature_maps):
     features = []
     for feature_map in feature_maps:
