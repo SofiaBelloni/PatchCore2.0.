@@ -37,21 +37,8 @@ class MVTecData(ImageFolder):
     - product: string that represents one of the possible MVTec Dataset classes,
     - img_size: dimension of the images
   '''
-  def __init__(self, product, img_size: 224):
+  def __init__(self, product, transform, target_transform):
     self.product = product
-    self.img_size = img_size
-    self.transform = transforms.Compose([
-        Resize(size=img_size, interpolation=InterpolationMode.BICUBIC),
-        CenterCrop(size=(img_size, img_size)),
-        _convert_image_to_rgb,
-        ToTensor(),
-        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
-    ])
-    self.target_transform = transforms.Compose([
-          Resize(size=img_size, interpolation=InterpolationMode.BICUBIC),
-          CenterCrop(size=(img_size, img_size)),
-          _convert_image_to_rgb ,
-          ToTensor()  ])
     if product in POSSIBLE_CLASSES:
       url = "https://www.mydrive.ch/shares/38536/3830184030e49fe74747669442f0f282/download/420938113-1629952094/mvtec_anomaly_detection.tar.xz"
       if not os.path.isdir(f'{DATA_PATH}'):
@@ -61,10 +48,11 @@ class MVTecData(ImageFolder):
         print('Extracting dataset...')
         with tarfile.open(DATA_PATH+".tar.xz") as tar:
           tar.extractall(DATA_PATH)
-      self.train_dataset = MVTecTrain(product, self.transform )
-      self.test_dataset = MVTecTest(product, self.transform, self.target_transform)
+      self.train_dataset = MVTecTrain(product, transform )
+      self.test_dataset = MVTecTest(product, transform, target_transform)
     else:
       print(f'{product} not present in MVTEC Dataset')
+      
   '''
     Returns train and test datasets.
   '''

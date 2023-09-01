@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import time
 import numpy as np
-
+import clip
 from tqdm import tqdm
 from sklearn import random_projection
 from sklearn.metrics import roc_curve, auc
@@ -10,7 +10,9 @@ from torch import tensor, Tensor
 from typing import Tuple, List
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import clip
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, InterpolationMode
+from datasetForClip import _convert_image_to_rgb
+
 
 class PatchCoreWithClip(torch.nn.Module):
   ''' 
@@ -28,34 +30,39 @@ class PatchCoreWithClip(torch.nn.Module):
     - perc_coreset: Percentage to which the original memory bank has been subsampled to,
     - eps: Parameter to control the quality of the embedding according to the Johnson-Lindenstrauss lemma.
   '''
-  def __init__(self, backbone: 'RN50', 
-               out_indices: Tuple = (2,3),
-               input_size: int = 224,
-               patch_size: int = 3,
-               stride: int = 1,
-               k: int = 3,
-               sigma: int = 4,
-               perc_coreset: float = 0.25,
-               eps: float =0.9):
+  def __init__(self, backbone: 'RN50', out_indices: Tuple = (2,3),
+               input_size: int = 224, patch_size: int = 3, stride: int = 1,
+               k: int = 5, sigma: int = 4, perc_coreset: float = 0.25, eps: float =0.9):
     super().__init__()
     self.out_indices = out_indices
     self.input_size = input_size
     self.k = k                                                                          # HYPERPARAMETER
     self.sigma = sigma
-    self.kernel_size = int(2 * self.sigma * 4 + 1)   
+    self.kernel_size = int(2 * self.sigma * 4 + 1)
     if torch.cuda.is_available():
         self.device = 'cuda'
         self.to(self.device)
     else:
         self.device = 'cpu'
-    self.feature_extractor, _= clip.load(backbone, device=self.device)
+    self.feature_extractor, self.transformation = clip.load(backbone, device = self.device)
+    self.target_transformation = transforms.Compose([
+          Resize(size=224, interpolation=InterpolationMode.BICUBIC),
+          CenterCrop(size=(224, 224)),
+          _convert_image_to_rgb ,
+          ToTensor()])
     for param in self.feature_extractor.parameters():
       param.requires_grad = False
     self.feature_extractor.eval()                                                       # Inference mode instead of training
     self.pooling = torch.nn.AvgPool2d(patch_size, stride)                               # Pooling done after the feature extraction
     self.memory_bank = []
     self.perc_coreset = perc_coreset                                                    # HYPERPARAMETER
-    self.eps = eps                                                                      # HYPERPARAMETER
+    self.eps = eps 
+    
+  '''
+    Returns the transformations to be applied to the train and target data.
+  '''
+  def get_transform(self):
+    return self.transformation, self.target_transformation                                                                    # HYPERPARAMETER                                                        # HYPERPARAMETER
 
   '''
     Defines the computation performed at every call.
@@ -85,8 +92,8 @@ class PatchCoreWithClip(torch.nn.Module):
     for sample, _ in tqdm(input):
       feature_maps = self(sample)
       resized_features, _ = self.patch_extraction(feature_maps)
-      patches.append(resized_features)  
-    patches = torch.cat(patches)
+      patches.append(resized_features)
+    patches = torch.cat(patches, dim=0)
     try:                                                                                # Applying JL Theorem
       transformation = random_projection.SparseRandomProjection(eps=self.eps)
       if self.device == 'cuda':
@@ -127,7 +134,6 @@ class PatchCoreWithClip(torch.nn.Module):
     segmentation_map = min_distances.reshape(1, 1, *feature_map_size)
     segmentation_map = F.interpolate(segmentation_map, size=(self.input_size, self.input_size), mode='bilinear')
     segmentation_map = transforms.functional.gaussian_blur(segmentation_map, self.kernel_size, sigma = self.sigma)
-
     return anomaly_score, segmentation_map
   
   '''
@@ -166,9 +172,8 @@ class PatchCoreWithClip(torch.nn.Module):
     y_scores = np.array(anomaly_scores)
     fpr_as, tpr_as, thresholds = roc_curve(y_true, y_scores)                      #Roc curve for anomaly score
     roc_auc_as = auc(fpr_as, tpr_as)
-    
-    return fpr_sm, tpr_sm, fpr_as, tpr_as, roc_auc_as, roc_auc_sm, sum(inference_times)/len(inference_times)
 
+    return fpr_sm, tpr_sm, fpr_as, tpr_as, roc_auc_as, roc_auc_sm, sum(inference_times)/len(inference_times)
 
   '''
     Custom methods to resize the patches, using adaptive average pooling.
@@ -231,3 +236,4 @@ class PatchCoreWithClip(torch.nn.Module):
     resized_features = self.resize(features, feature_map_size)                        # Custom methods to resize and reshape the patches
     resized_features = self.reshape(resized_features)
     return resized_features, feature_map_size
+
