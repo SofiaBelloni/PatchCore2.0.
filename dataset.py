@@ -30,6 +30,12 @@ POSSIBLE_CLASSES = [
     "zipper",
 ]
 class MVTecData(ImageFolder):
+  '''
+    This class represents the MVTec Dataset.
+    Parameters:
+    - product: string that represents one of the possible MVTec Dataset classes,
+    - img_size: dimension of the images
+  '''
   def __init__(self, product, img_size: 224):
     self.product = product
     self.img_size = img_size
@@ -47,10 +53,19 @@ class MVTecData(ImageFolder):
     else:
       print(f'{product} not present in MVTEC Dataset')
 
+  '''
+    Returns train and test datasets.
+  '''
   def get_datasets(self):
     return self.train_dataset, self.test_dataset
 
 class MVTecTrain(ImageFolder):
+  '''
+    This class represents the MVTec TRAIN Dataset.
+    Parameters:
+    - product: string that represents one of the possible MVTec Dataset classes,
+    - img_size: dimension of the images
+  '''
   def __init__(self, product, img_size):
     super().__init__(
         root = f'{DATA_PATH}/{product}/train/',
@@ -65,6 +80,12 @@ class MVTecTrain(ImageFolder):
     self.img_size = img_size
 
 class MVTecTest(ImageFolder):
+  '''
+    This class represents the MVTec TEST Dataset.
+     Parameters:
+    - product: string that represents one of the possible MVTec Dataset classes,
+    - img_size: dimension of the images
+  '''
   def __init__(self, product, img_size):
     super().__init__(
         root = f'{DATA_PATH}/{product}/test/',

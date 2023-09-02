@@ -35,7 +35,8 @@ class MVTecData(ImageFolder):
     This class represents the MVTec Dataset.
     Parameters:
     - product: string that represents one of the possible MVTec Dataset classes,
-    - img_size: dimension of the images
+     - transform: transformations to be applied to the images, 
+    - target transform: transformations to be applied to the target (mask).
   '''
   def __init__(self, product, transform, target_transform):
     self.product = product
