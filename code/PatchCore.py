@@ -11,6 +11,7 @@ from torch import tensor, Tensor
 from typing import Tuple, List
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from datetime import datetime
 
 class PatchCore(torch.nn.Module):
   ''' 
@@ -137,8 +138,12 @@ class PatchCore(torch.nn.Module):
     inference_times = []
     for sample, label, mask in tqdm(input):
       start_time = time.time()
+      start_time = datetime.fromtimestamp(start_time)
+      start_time = (start_time.minutes * 60) + start_time.seconds
       anomaly_score, segmentation_map = self.predict(sample)
       end_time = time.time()
+      end_time = datetime.fromtimestamp(end_time)
+      end_time = (end_time.minutes * 60) + end_time.seconds
       inference_times.append(end_time - start_time)
       segmentation_map = segmentation_map.to("cpu")
       anomaly_scores.append(anomaly_score.item())
