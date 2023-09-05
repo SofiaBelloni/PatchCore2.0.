@@ -139,11 +139,11 @@ class PatchCore(torch.nn.Module):
     for sample, label, mask in tqdm(input):
       start_time = time.time()
       start_time = datetime.fromtimestamp(start_time)
-      start_time = start_time.seconds
       anomaly_score, segmentation_map = self.predict(sample)
       end_time = time.time()
       end_time = datetime.fromtimestamp(end_time)
-      end_time = end_time.seconds
+      diff = end_time - start_time
+      diff = diff.seconds + diff.microseconds / 1e6
       inference_times.append(end_time - start_time)
       segmentation_map = segmentation_map.to("cpu")
       anomaly_scores.append(anomaly_score.item())
