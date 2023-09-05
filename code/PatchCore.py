@@ -143,8 +143,8 @@ class PatchCore(torch.nn.Module):
       end_time = time.time()
       end_time = datetime.fromtimestamp(end_time)
       diff = end_time - start_time
-      diff = diff.seconds + diff.microseconds / 1e6
-      inference_times.append(end_time - start_time)
+      res = diff.seconds + (diff.microseconds / 1e6)
+      inference_times.append(res)
       segmentation_map = segmentation_map.to("cpu")
       anomaly_scores.append(anomaly_score.item())
       labels.append(label.item())
